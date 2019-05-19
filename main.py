@@ -17,7 +17,7 @@ computed_states = [
     'tick',
     'vel',
     'acc',
-    'pos_err'
+    'pos_error'
 ]
 all_states = input_states + computed_states + remembered_states
 
@@ -52,7 +52,7 @@ def compute_states():
         states['tick'] = 0
         states['vel'] = 0
         states['acc'] = 0
-        previous_states['pos_err'] = np.array([0, 0])
+        previous_states['pos_error'] = np.array([0, 0])
         states['prev_checkpoint_pos'] = states['pos']
 
 
@@ -62,8 +62,72 @@ def send_command(bearing, thrust):
     radius = 100    # pixels
     direction_vector = np.array([math.sin(math.radians(bearing)), math.cos(math.radians(bearing))], 'f4')
     command_coordinate = states['pos'] + (radius * direction_vector)
-    print([bearing, direction_vector, command_coordinate], file=sys.stderr)
     print('{0} {1} {2}'.format(int(round(command_coordinate[0])), int(round(-1 * command_coordinate[1])), thrust))
+
+
+def get_command_bearing():
+    trajectory_vector = states['next_checkpoint_pos'] - states['pos']
+    error_vector = np.array([trajectory_vector[1], -1 * trajectory_vector[0]])
+    
+    # Source: https://stackoverflow.com/a/5227626
+    
+    # P - point
+    # D - direction of line (unit length)
+    # A - point in line
+    # X - base of the perpendicular line
+
+    #     P
+    #    /|
+    #   / |
+    #  /  v
+    # A---X----->D
+ 
+    # (P-A).D == |X-A|
+ 
+    # X == A + ((P-A).D)D
+    # Desired perpendicular: X-P
+
+    trajectory_uv = (states['next_checkpoint_pos'] - states['prev_checkpoint_pos']).astype('f4')
+    trajectory_uv /= np.linalg.norm(trajectory_uv)
+    ideal_position = states['prev_checkpoint_pos'] + np.dot(states['pos'] - states['prev_checkpoint_pos'], trajectory_uv) * trajectory_uv
+    states['pos_error'] = states['pos'] - ideal_position
+    
+    vector_to_checkpoint = states['next_checkpoint_pos'] - states['pos']
+    trajectory_bearing = math.degrees(math.atan2(vector_to_checkpoint[0], vector_to_checkpoint[1])) % 360
+    
+    # Get errors
+    if np.cross(states['pos_error'], trajectory_uv) > 0:
+        error_sign = -1
+    else:
+        error_sign = 1
+    error_p = error_sign * np.linalg.norm(states['pos_error'])
+    error_d = error_sign * np.linalg.norm(previous_states['pos_error']) - error_sign * np.linalg.norm(states['pos_error'])
+    
+    # PD controller
+    P = 0.005
+    D = 0
+    result = P * error_p + D * error_d
+    
+    if result > 180:
+        result = 180
+    elif result < -180:
+        result = -180
+    
+    return (trajectory_bearing + result) % 360
+
+
+def get_command_thrust():
+    turning_thrshold = 30
+    if (
+            (states['next_checkpoint_angle'] > turning_thrshold) or 
+            (states['next_checkpoint_angle'] < (-1 * turning_thrshold)) or 
+            states['next_checkpoint_dist'] < 600
+        ):
+        thrust = 0
+    else:
+        thrust = 100
+
+    return thrust
 
 
 if __name__ == '__main__':
@@ -76,11 +140,13 @@ if __name__ == '__main__':
         get_inputs()
         compute_states()
         print(states, file=sys.stderr)
+
+        # Compute command
+        command_bearing = get_command_bearing()
+        print(command_bearing, file=sys.stderr)
+        command_thurst = get_command_thrust()
         
         # Send command
-        command_vector = states['next_checkpoint_pos'] - states['pos']
-        bearing = math.degrees(math.atan2(command_vector[0], command_vector[1])) % 360
-        thrust = 100
-        send_command(bearing, thrust)
+        send_command(command_bearing, command_thurst)
 
         previous_states = states
