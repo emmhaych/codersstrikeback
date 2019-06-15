@@ -1,6 +1,7 @@
 import sys
 import math
 import numpy as np
+from enum import Enum
 
 # Setup States
 input_states = [
@@ -17,12 +18,21 @@ computed_states = [
     'tick',
     'vel',
     'acc',
-    'pos_error'
+    'pos_error',
+    'map',
+    'race_state'
 ]
 all_states = input_states + computed_states + remembered_states
 
 states = dict((el, None) for el in (all_states))
 previous_states = None
+
+
+class RaceState(Enum):
+    START = 0
+    LAP_DISCOVERY = 1
+    LAP_NEW = 2
+    LAP_IN_PROGRESS = 3
 
 
 def get_inputs():
@@ -43,17 +53,34 @@ def compute_states():
         states['tick'] = previous_states['tick'] + 1
         states['vel'] = states['pos'] - previous_states['pos']
         states['acc'] = states['vel'] - previous_states['vel']
+        states['map'] = previous_states['map']
+        states['race_state'] = previous_states['race_state']
         
         if not np.array_equal(previous_states['next_checkpoint_pos'], states['next_checkpoint_pos']):
+            # Just crossed checkpoint
             states['prev_checkpoint_pos'] = previous_states['next_checkpoint_pos']
+            """
+            if np.equal(states['next_checkpoint_pos'], states['map'][0]):
+                states['race_state'] = RaceState.LAP_NEW
+            elif states['race_state'] == RaceState.LAP_DISCOVERY:
+                states['map'].append(states['next_checkpoint_pos'])
+            """
         else:
             states['prev_checkpoint_pos'] = previous_states['prev_checkpoint_pos']
+
+        # Race state is discovery until the same checkpoint is recorded
+        if states['race_state'] == RaceState.START:
+            states['race_state'] = RaceState.LAP_DISCOVERY
+        elif states['race_state'] == RaceState.LAP_NEW:
+            states['race_state'] = RaceState.LAP_IN_PROGRESS
     else:
         states['tick'] = 0
         states['vel'] = 0
         states['acc'] = 0
         previous_states['pos_error'] = np.array([0, 0])
         states['prev_checkpoint_pos'] = states['pos']
+        states['map'] = [states['next_checkpoint_pos']]
+        states['race_state'] = RaceState.START
 
 
 def send_command(bearing, thrust):
