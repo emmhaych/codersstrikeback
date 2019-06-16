@@ -1,6 +1,8 @@
 from csbadaption.engine import Engine
+from csbadaption.datamodel import RaceState
 import numpy as np
 import math
+import sys
 
 
 def get_command_bearing(datamodel):
@@ -99,9 +101,35 @@ def bt_to_xyt(datamodel, bearing, thrust):
     return x, y, thrust
 
 
+def determine_boost_location(datamodel):
+    distances = []
+    for x, y in \
+        [[i, (i + 1) % len(datamodel.states_t.map)]
+            for i in range(len(datamodel.states_t.map))]:
+        distances.append(
+            np.linalg.norm(
+                datamodel.states_t.map[x] - datamodel.states_t.map[y]
+            )
+        )
+    print('Distances: {0}'.format(distances), file=sys.stderr)
+    return np.argmax(distances)
+
+
 def tick(datamodel):
     bearing = get_command_bearing(datamodel)
     thrust = get_command_thrust(datamodel)
+
+    if datamodel.states_t.tick > 0:
+        if datamodel.states_tm1.race_state == RaceState.LAP_DISCOVERY and \
+                datamodel.states_t.race_state == RaceState.LAP_NEW:
+            datamodel.states_t.boost_location = determine_boost_location(datamodel)
+
+    if datamodel.states_t.boost_location and not datamodel.states_t.boost_used:
+        if np.array_equal(datamodel.states_tm1.prev_checkpoint, datamodel.states_t.map[datamodel.states_t.boost_location]):
+            if abs(datamodel.states_t.next_checkpoint_angle) < 15:
+                thrust = 'BOOST'
+                datamodel.states_t.boost_used = True
+
     return bt_to_xyt(datamodel, bearing, thrust)
 
 
